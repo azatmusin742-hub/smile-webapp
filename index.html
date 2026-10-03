@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Запись — Стоматология «Улыбка»</title>
+<!--
+  Встроенное приложение записи для Telegram-бота стоматологии «Улыбка».
+  Страница статическая: услуги, врачи и свободное время приходят от бота в параметре ?d=,
+  а заполненная форма возвращается в бота через Telegram.WebApp.sendData().
+  Бот перепроверяет все поля и показывает карточку для подтверждения.
+-->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-secondary-bg-color, #f1f2f6);
+    --card: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #ffffff));
+    --text: var(--tg-theme-text-color, #16181d);
+    --hint: var(--tg-theme-hint-color, #8a8f98);
+    --accent: var(--tg-theme-button-color, #2f80ed);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --header: var(--tg-theme-section-header-text-color, var(--hint));
+    --danger: var(--tg-theme-destructive-text-color, #e5484d);
+    --line: color-mix(in srgb, var(--hint) 22%, transparent);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not(.tg) {
+      --bg: #0f1115; --card: #1b1e24; --text: #eef0f3; --hint: #8b919c;
+      --accent: #4c8dff; --accent-text: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    padding: 16px 16px calc(96px + env(safe-area-inset-bottom));
+    max-width: 560px; margin: 0 auto;
+  }
+  header { padding: 4px 4px 12px; }
+  h1 { font-size: 22px; line-height: 1.2; margin: 0 0 2px; }
+  .hint { color: var(--hint); font-size: 14px; margin: 0; }
+  section { margin-top: 18px; }
+  section[hidden] { display: none; }
+  h2 {
+    font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--header); margin: 0 4px 8px;
+  }
+  .card { background: var(--card); border-radius: 14px; overflow: hidden; }
+
+  /* Список услуг и врачей */
+  .option {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 13px 14px; border: 0; background: none; color: inherit; font: inherit; text-align: left;
+    cursor: pointer;
+  }
+  .option + .option { border-top: 1px solid var(--line); }
+  .option .main { flex: 1; min-width: 0; }
+  .option .sub { color: var(--hint); font-size: 14px; }
+  .option .price { color: var(--hint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .option .check {
+    width: 22px; height: 22px; border-radius: 50%; flex: none;
+    border: 2px solid var(--line); display: grid; place-items: center;
+  }
+  .option[aria-pressed="true"] .check { background: var(--accent); border-color: var(--accent); }
+  .option[aria-pressed="true"] .check::after {
+    content: ""; width: 9px; height: 5px; margin-top: -2px;
+    border: solid var(--accent-text); border-width: 0 0 2px 2px; transform: rotate(-45deg);
+  }
+
+  /* Даты — горизонтальная лента, время — сетка */
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip, .slot {
+    border: 0; font: inherit; color: var(--text); background: var(--card); cursor: pointer;
+    border-radius: 12px; transition: background .15s, color .15s;
+  }
+  .chip { flex: none; padding: 8px 14px; text-align: center; min-width: 74px; }
+  .chip .dow { display: block; font-size: 12px; color: var(--hint); }
+  .chip .num { display: block; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .slot { padding: 11px 0; font-variant-numeric: tabular-nums; }
+  .chip[aria-pressed="true"], .slot[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+  .chip[aria-pressed="true"] .dow { color: inherit; opacity: .8; }
+
+  /* Контакты */
+  .field { display: block; padding: 10px 14px; }
+  .field + .field { border-top: 1px solid var(--line); }
+  .field span { display: block; font-size: 13px; color: var(--hint); margin-bottom: 2px; }
+  .field input {
+    width: 100%; border: 0; outline: 0; background: none; color: var(--text);
+    font: inherit; font-size: 17px; padding: 2px 0;
+  }
+  .field.invalid span { color: var(--danger); }
+  .note { color: var(--hint); font-size: 13px; margin: 8px 4px 0; }
+  .empty { padding: 14px; color: var(--hint); }
+
+  #summary { margin-top: 18px; padding: 12px 14px; font-size: 15px; }
+  #summary[hidden] { display: none; }
+  /* Запасная кнопка — только если страница открыта не в Telegram */
+  #submit {
+    position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
+    max-width: 528px; margin: 0 auto; padding: 14px; border: 0; border-radius: 12px;
+    background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer;
+  }
+  #submit[hidden] { display: none; }
+  #fatal { margin-top: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Запись на приём</h1>
+  <p class="hint">Стоматология «Улыбка»</p>
+</header>
+
+<main id="app">
+  <section id="sec-service">
+    <h2>Услуга</h2>
+    <div class="card" id="services"></div>
+  </section>
+
+  <section id="sec-doctor" hidden>
+    <h2>Врач</h2>
+    <div class="card" id="doctors"></div>
+  </section>
+
+  <section id="sec-day" hidden>
+    <h2>Дата</h2>
+    <div class="chips" id="days"></div>
+  </section>
+
+  <section id="sec-time" hidden>
+    <h2>Время</h2>
+    <div class="grid" id="hours"></div>
+  </section>
+
+  <section id="sec-contacts" hidden>
+    <h2>Контакты</h2>
+    <div class="card">
+      <label class="field" id="name-field">
+        <span>Имя</span>
+        <input id="name" autocomplete="given-name" maxlength="50" placeholder="Как к вам обращаться">
+      </label>
+      <label class="field" id="phone-field">
+        <span>Телефон</span>
+        <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 900 123-45-67">
+      </label>
+    </div>
+    <p class="note">Имя и телефон уйдут только в чат с ботом клиники.</p>
+  </section>
+
+  <div class="card" id="summary" hidden></div>
+</main>
+
+<p class="hint" id="fatal" hidden>
+  Форма открывается из чата с ботом: нажмите «📱 Запись в приложении».
+</p>
+<button id="submit" type="button" hidden>Записаться</button>
+
+<script>
+(function () {
+  "use strict";
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const inTelegram = Boolean(tg && tg.initData);
+  if (inTelegram) document.documentElement.classList.add("tg");
+
+  const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+                  "сентября", "октября", "ноября", "декабря"];
+  const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+  const NAME_RE = /^[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё '.-]{1,49}$/;
+
+  const $ = (id) => document.getElementById(id);
+
+  function decodePayload(raw) {
+    let b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  }
+
+  let data = null;
+  try {
+    data = decodePayload(new URLSearchParams(location.search).get("d") || "");
+  } catch (e) {
+    data = null;
+  }
+  if (!data || !Array.isArray(data.s)) {
+    $("app").hidden = true;
+    $("fatal").hidden = false;
+    if (tg) tg.ready();
+    return;
+  }
+
+  const services = data.s.map(([code, name, price]) => ({ code, name, price }));
+  const doctors = data.d.map(([code, name, specialty, codes]) => ({ code, name, specialty, codes }));
+  const state = { service: null, doctor: null, day: null, hour: null };
+
+  const parseDay = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
+  const today = parseDay(data.t);
+  const pad = (n) => String(n).padStart(2, "0");
+  const price = (rub) => rub.toLocaleString("ru-RU").replace(/\s/g, " ") + " ₽";
+  const haptic = () => tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged();
+
+  function freeMask(doctor, dayIndex) { return (data.f[doctor] || [])[dayIndex] || 0; }
+  function freeHours(doctor, dayIndex) {
+    const mask = freeMask(doctor, dayIndex);
+    return data.h.filter((_, i) => mask & (1 << i));
+  }
+
+  function el(tag, attrs, children) {
+    const node = document.createElement(tag);
+    Object.entries(attrs || {}).forEach(([k, v]) => {
+      if (k === "onclick") node.addEventListener("click", v);
+      else node.setAttribute(k, v);
+    });
+    (children || []).forEach((c) => node.append(c));
+    return node;
+  }
+
+  function option(selected, main, sub, right, onclick) {
+    return el("button", { class: "option", type: "button", "aria-pressed": String(selected), onclick }, [
+      el("span", { class: "check", "aria-hidden": "true" }),
+      el("span", { class: "main" }, [main, ...(sub ? [el("div", { class: "sub" }, [sub])] : [])]),
+      ...(right ? [el("span", { class: "price" }, [right])] : []),
+    ]);
+  }
+
+  function reveal(sectionId) {
+    const sec = $(sectionId);
+    const wasHidden = sec.hidden;
+    sec.hidden = false;
+    if (wasHidden) setTimeout(() => sec.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  }
+
+  function render() {
+    // Услуги
+    $("services").replaceChildren(...services.map((s) =>
+      option(state.service === s.code, s.name, null, price(s.price), () => {
+        if (state.service === s.code) return;
+        haptic();
+        state.service = s.code;
+        const ok = doctors.some((d) => d.code === state.doctor && d.codes.includes(s.code));
+        if (!ok) Object.assign(state, { doctor: null, day: null, hour: null });
+        render();
+        reveal("sec-doctor");
+      })));
+
+    // Врачи — только те, кто оказывает выбранную услугу
+    $("sec-doctor").hidden = !state.service;
+    if (state.service) {
+      $("doctors").replaceChildren(...doctors.filter((d) => d.codes.includes(state.service)).map((d) =>
+        option(state.doctor === d.code, d.name, d.specialty, null, () => {
+          if (state.doctor === d.code) return;
+          haptic();
+          Object.assign(state, { doctor: d.code, day: null, hour: null });
+          render();
+          reveal("sec-day");
+        })));
+    }
+
+    // Даты, где у врача есть свободное время
+    $("sec-day").hidden = !state.doctor;
+    if (state.doctor) {
+      const chips = data.days.map((iso, i) => ({ iso, i })).filter(({ i }) => freeMask(state.doctor, i))
+        .map(({ iso }) => {
+          const date = parseDay(iso);
+          const diff = Math.round((date - today) / 86400000);
+          const dow = diff === 0 ? "сегодня" : diff === 1 ? "завтра" : WEEKDAYS[date.getDay()];
+          return el("button", {
+            class: "chip", type: "button", "aria-pressed": String(state.day === iso),
+            onclick: () => {
+              if (state.day === iso) return;
+              haptic();
+              Object.assign(state, { day: iso, hour: null });
+              render();
+              reveal("sec-time");
+            },
+          }, [el("span", { class: "dow" }, [dow]), el("span", { class: "num" }, [`${date.getDate()} ${MONTHS_SHORT[date.getMonth()]}`])]);
+        });
+      $("days").replaceChildren(...(chips.length ? chips
+        : [el("div", { class: "empty" }, ["Нет свободного времени на ближайшие дни. Выберите другого врача."])]));
+    }
+
+    // Свободное время
+    $("sec-time").hidden = !state.day;
+    if (state.day) {
+      const dayIndex = data.days.indexOf(state.day);
+      $("hours").replaceChildren(...freeHours(state.doctor, dayIndex).map((h) =>
+        el("button", {
+          class: "slot", type: "button", "aria-pressed": String(state.hour === h),
+          onclick: () => {
+            if (state.hour === h) return;
+            haptic();
+            state.hour = h;
+            render();
+            reveal("sec-contacts");
+          },
+        }, [`${pad(h)}:00`])));
+    }
+
+    $("sec-contacts").hidden = state.hour === null;
+    updateSubmit();
+  }
+
+  // Контакты
+  const nameInput = $("name");
+  const phoneInput = $("phone");
+  const user = inTelegram && tg.initDataUnsafe && tg.initDataUnsafe.user;
+  if (user && user.first_name) nameInput.value = user.first_name;
+
+  function nameValid() { return NAME_RE.test(nameInput.value.trim().replace(/\s+/g, " ")); }
+  function phoneValid() {
+    const raw = phoneInput.value;
+    if (/[^\d\s()+\-]/.test(raw)) return false;
+    const digits = raw.replace(/\D/g, "");
+    return (digits.length === 11 && /^[78]/.test(digits)) || (digits.length === 10 && digits[0] === "9");
+  }
+  function markField(input, field, valid) {
+    field.classList.toggle("invalid", input.value.trim() !== "" && !valid);
+  }
+  nameInput.addEventListener("input", () => { markField(nameInput, $("name-field"), nameValid()); updateSubmit(); });
+  phoneInput.addEventListener("input", () => { markField(phoneInput, $("phone-field"), phoneValid()); updateSubmit(); });
+
+  function complete() {
+    return state.service && state.doctor && state.day && state.hour !== null && nameValid() && phoneValid();
+  }
+
+  function updateSubmit() {
+    const summary = $("summary");
+    if (state.hour !== null) {
+      const s = services.find((x) => x.code === state.service);
+      const d = doctors.find((x) => x.code === state.doctor);
+      const date = parseDay(state.day);
+      summary.textContent =
+        `${s.name}, ${d.name}, ${date.getDate()} ${MONTHS[date.getMonth()]}, ${pad(state.hour)}:00 — ${price(s.price)}`;
+      summary.hidden = false;
+    } else {
+      summary.hidden = true;
+    }
+
+    const ready = Boolean(complete());
+    const text = ready ? `Записаться · ${price(services.find((x) => x.code === state.service).price)}` : "Записаться";
+    if (inTelegram) {
+      tg.MainButton.setText(text);
+      if (ready) tg.MainButton.show(); else tg.MainButton.hide();
+    } else {
+      $("submit").textContent = text;
+      $("submit").hidden = !ready;
+    }
+  }
+
+  function submit() {
+    if (!complete()) return;
+    const payload = JSON.stringify({
+      service: state.service,
+      doctor: state.doctor,
+      day: state.day,
+      hour: state.hour,
+      name: nameInput.value.trim().replace(/\s+/g, " "),
+      phone: phoneInput.value.trim(),
+    });
+    if (inTelegram) {
+      tg.sendData(payload); // Telegram закроет приложение и передаст форму боту
+    } else {
+      window.__lastPayload = payload; // для проверки страницы вне Telegram
+      $("submit").textContent = "Отправлено ✓";
+    }
+  }
+
+  if (inTelegram) {
+    tg.ready();
+    tg.expand();
+    tg.MainButton.onClick(submit);
+  } else {
+    $("submit").addEventListener("click", submit);
+  }
+  render();
+})();
+</script>
+</body>
+</html>
