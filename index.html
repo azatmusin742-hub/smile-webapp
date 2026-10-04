@@ -142,10 +142,11 @@
       </label>
       <label class="field" id="phone-field">
         <span>Телефон</span>
-        <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 900 123-45-67">
+        <input id="phone" type="tel" inputmode="tel" autocomplete="tel" value="+7 " placeholder="+7 900 123-45-67">
       </label>
     </div>
-    <p class="note">Имя и телефон уйдут только в чат с ботом клиники.</p>
+    <p class="note">После нажатия «Записаться» заявка сразу уйдёт администратору клиники.
+      Имя и телефон видит только клиника.</p>
   </section>
 
   <div class="card" id="summary" hidden></div>
@@ -309,17 +310,46 @@
   if (user && user.first_name) nameInput.value = user.first_name;
 
   function nameValid() { return NAME_RE.test(nameInput.value.trim().replace(/\s+/g, " ")); }
-  function phoneValid() {
-    const raw = phoneInput.value;
-    if (/[^\d\s()+\-]/.test(raw)) return false;
-    const digits = raw.replace(/\D/g, "");
-    return (digits.length === 11 && /^[78]/.test(digits)) || (digits.length === 10 && digits[0] === "9");
+  // Телефон: «+7 » стоит всегда, остальное форматируется как +7 900 123-45-67
+  function phoneDigits(value) {
+    let rest = value.trim();
+    if (rest.startsWith("+7")) rest = rest.slice(2);
+    let d = rest.replace(/\D/g, "");
+    if (d.length >= 11 && /^[78]/.test(d)) d = d.slice(1); // вставили номер целиком: 8 900… или 7 900…
+    return d.slice(0, 10);
   }
+  function formatPhone(d) {
+    let out = "+7 " + d.slice(0, 3);
+    if (d.length > 3) out += " " + d.slice(3, 6);
+    if (d.length > 6) out += "-" + d.slice(6, 8);
+    if (d.length > 8) out += "-" + d.slice(8, 10);
+    return out;
+  }
+  let lastPhoneDigits = "";
+  function onPhoneInput(e) {
+    let d = phoneDigits(phoneInput.value);
+    // Стёрли пробел или дефис — цифры не изменились; тогда стираем последнюю цифру
+    if (e && e.inputType && e.inputType.startsWith("delete") && d === lastPhoneDigits) d = d.slice(0, -1);
+    lastPhoneDigits = d;
+    phoneInput.value = formatPhone(d);
+    $("phone-field").classList.remove("invalid");
+    updateSubmit();
+  }
+  function phoneValid() { return phoneDigits(phoneInput.value).length === 10; }
   function markField(input, field, valid) {
     field.classList.toggle("invalid", input.value.trim() !== "" && !valid);
   }
   nameInput.addEventListener("input", () => { markField(nameInput, $("name-field"), nameValid()); updateSubmit(); });
-  phoneInput.addEventListener("input", () => { markField(phoneInput, $("phone-field"), phoneValid()); updateSubmit(); });
+  phoneInput.addEventListener("input", onPhoneInput);
+  phoneInput.addEventListener("focus", () => {
+    // Курсор — после «+7 », чтобы сразу набирать номер
+    const end = phoneInput.value.length;
+    setTimeout(() => phoneInput.setSelectionRange(end, end), 0);
+  });
+  phoneInput.addEventListener("blur", () => {
+    const d = phoneDigits(phoneInput.value);
+    $("phone-field").classList.toggle("invalid", d.length > 0 && d.length < 10);
+  });
 
   function complete() {
     return state.service && state.doctor && state.day && state.hour !== null && nameValid() && phoneValid();
@@ -357,7 +387,7 @@
       day: state.day,
       hour: state.hour,
       name: nameInput.value.trim().replace(/\s+/g, " "),
-      phone: phoneInput.value.trim(),
+      phone: "+7" + phoneDigits(phoneInput.value),
     });
     if (inTelegram) {
       tg.sendData(payload); // Telegram закроет приложение и передаст форму боту
